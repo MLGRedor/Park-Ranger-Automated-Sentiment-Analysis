@@ -1,4 +1,4 @@
-# Park Ranger (Phase 1)
+# Park Ranger (Phase 1) - Ongoing
 
 This commit contains only Phase 1 (database + environment setup).
 
