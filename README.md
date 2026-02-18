@@ -18,6 +18,7 @@ This commit contains only Phase 1 (database + environment setup).
 ### Import Database
 
 1. Open **XAMPP**
+(edit:) Start **Apache**
 2. Start **MySQL**
 3. Open **phpMyAdmin using Admin button sa XAMPP MySQL**
 4. Click **Import**
@@ -32,4 +33,7 @@ This commit contains only Phase 1 (database + environment setup).
 2. Copy `.env.example` to `.env`
 3. Fill in your MySQL password
 
+# (Phase 2)
+
+- `backend/app.py` (Flask API backend: user login, product/location/feedback CRUD, JWT authentication, and database interaction)
 
