@@ -3,7 +3,7 @@ CREATE DATABASE IF NOT EXISTS park_ranger_system;
 USE park_ranger_system;
 
 -- USER Table (For JWT Auth)
-CREATE TABLE USER (
+CREATE TABLE `USER` (
     user_id INT AUTO_INCREMENT PRIMARY KEY,
     username VARCHAR(255) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL
