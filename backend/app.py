@@ -1,13 +1,12 @@
 # ------------------- Imports -------------------
-
 from flask import Flask, request, jsonify
 from db import create_db_connection
 import jwt
 from functools import wraps
-from flask import request, jsonify
+import re
+from sentiment_engine import analyze_sentiment, generate_category_scores
 
 # ------------------- Flask App -------------------
-
 app = Flask(__name__)
 SECRET_KEY = "your_secret_here"
 
@@ -15,33 +14,32 @@ SECRET_KEY = "your_secret_here"
 def sanitize_input(text):
     if not text:
         return ""
-    # Remove HTML tags to prevent XSS
     return re.sub(r'<[^>]*?>', '', str(text))
 
 # ------------------- JWT Decorator --------------------
-
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = None
-        if 'x-access-token' in request.headers:
-            token = request.headers['x-access-token']
+        token = request.headers.get('x-access-token')
+
         if not token:
             return jsonify({"message": "Token is missing!"}), 401
+
         try:
             data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
             current_user = data['username']
         except:
             return jsonify({"message": "Token is invalid!"}), 401
+
         return f(current_user, *args, **kwargs)
     return decorated
 
-# ------------------- Home route -------------------
+# ------------------- Home -------------------
 @app.route("/")
 def home():
-    return "Park Ranger API Running ~ Phase 2"
+    return "Park Ranger API Running ~ Phase 3 🚀"
 
-# ------------------- USERS -------------------
+# ------------------- LOGIN -------------------
 @app.route("/login", methods=["POST"])
 def login():
     data = request.json
@@ -54,25 +52,26 @@ def login():
 
     cursor = conn.cursor(dictionary=True)
     cursor.execute(
-        "SELECT * FROM USER WHERE username=%s AND password_hash=%s", 
+        "SELECT * FROM USER WHERE username=%s AND password_hash=%s",
         (username, password)
     )
     user = cursor.fetchone()
+
     cursor.close()
     conn.close()
 
     if user:
         token = jwt.encode({"username": username}, SECRET_KEY, algorithm="HS256")
         return jsonify({"status": "success", "token": token})
-    
-    return jsonify({"status": "failed"}), 401
 
+    return jsonify({"status": "failed"}), 401
 
 # ------------------- PRODUCTS -------------------
 @app.route("/products", methods=["POST"])
 @token_required
 def add_product(current_user):
     data = request.json
+
     name = sanitize_input(data.get("product_name"))
     tier = sanitize_input(data.get("performance_tier", ""))
     rate = float(data.get("sentiment_rate", 0))
@@ -86,9 +85,11 @@ def add_product(current_user):
         "INSERT INTO PRODUCT (product_name, performance_tier, sentiment_rate) VALUES (%s,%s,%s)",
         (name, tier, rate)
     )
+
     conn.commit()
     cursor.close()
     conn.close()
+
     return jsonify({"status": "product added"})
 
 @app.route("/products", methods=["GET"])
@@ -100,72 +101,78 @@ def get_products():
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT * FROM PRODUCT")
     products = cursor.fetchall()
+
     cursor.close()
     conn.close()
+
     return jsonify(products)
 
-@app.route("/products/<int:product_id>", methods=["PUT"])
-@token_required
-def edit_product(current_user, product_id):
-    data = request.json
-    name = sanitize_input(data.get("product_name"))
-    tier = sanitize_input(data.get("performance_tier"))
-    rate = float(data.get("sentiment_rate", 0))
-
-    conn = create_db_connection()
-    if not conn:
-        return jsonify({"status": "db connection failed"}), 500
-
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE PRODUCT SET product_name=%s, performance_tier=%s, sentiment_rate=%s WHERE product_id=%s",
-        (name, tier, rate, product_id)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-    return jsonify({"status": "product updated"})
-
-@app.route("/products/<int:product_id>", methods=["DELETE"])
-@token_required
-def delete_product(current_user, product_id):
-    conn = create_db_connection()
-    if not conn:
-        return jsonify({"status": "db connection failed"}), 500
-
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM PRODUCT WHERE product_id=%s", (product_id,))
-    conn.commit()
-    cursor.close()
-    conn.close()
-    return jsonify({"status": "product deleted"})
-
-# ------------------- FEEDBACK (Basic Orders) -------------------
+# ------------------- FEEDBACK (WITH NLP) -------------------
 @app.route("/feedback", methods=["POST"])
 @token_required
 def add_feedback(current_user):
     data = request.json
-    loc_id = data.get("location_id")
-    prod_id = data.get("product_id")
-    src_id = data.get("source_id")
-    text = sanitize_input(data.get("feedback_text"))
-    label = sanitize_input(data.get("sentiment_label", ""))
-    score = float(data.get("sentiment_score", 0))
 
-    conn = create_db_connection()
-    if not conn:
-        return jsonify({"status": "db connection failed"}), 500
+    try:
+        loc_id = int(data.get("location_id"))
+        prod_id = int(data.get("product_id"))
+        src_id = int(data.get("source_id"))
+        text = sanitize_input(data.get("feedback_text"))
 
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO FEEDBACK (location_id, product_id, source_id, feedback_text, sentiment_label, sentiment_score) VALUES (%s,%s,%s,%s,%s,%s)",
-        (loc_id, prod_id, src_id, text, label, score)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-    return jsonify({"status": "feedback added"})
+        if not loc_id or not prod_id or not src_id or not text.strip():
+            return jsonify({"status": "missing or invalid fields"}), 400
 
+        # NLP
+        label, score = analyze_sentiment(text)
+
+        conn = create_db_connection()
+        if not conn:
+            return jsonify({"status": "db connection failed"}), 500
+
+        cursor = conn.cursor()
+
+        # Insert feedback
+        cursor.execute(
+            """INSERT INTO FEEDBACK 
+            (location_id, product_id, source_id, feedback_text, sentiment_label, sentiment_score) 
+            VALUES (%s,%s,%s,%s,%s,%s)""",
+            (loc_id, prod_id, src_id, text, label, score)
+        )
+
+        feedback_id = cursor.lastrowid
+
+        # Generate category ratings
+        scores = generate_category_scores(score)
+
+        cursor.execute(
+            """INSERT INTO CATEGORY_RATING 
+            (feedback_id, taste_score, quality_score, value_score, service_score, presentation_score)
+            VALUES (%s,%s,%s,%s,%s,%s)""",
+            (
+                feedback_id,
+                scores["taste_score"],
+                scores["quality_score"],
+                scores["value_score"],
+                scores["service_score"],
+                scores["presentation_score"]
+            )
+        )
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            "status": "feedback added",
+            "sentiment_label": label,
+            "sentiment_score": score,
+            "category_scores": scores
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ------------------- GET FEEDBACK WITH RATINGS -------------------
 @app.route("/feedback", methods=["GET"])
 def get_feedback():
     conn = create_db_connection()
@@ -173,10 +180,19 @@ def get_feedback():
         return jsonify({"status": "db connection failed"}), 500
 
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM FEEDBACK")
+
+    cursor.execute("""
+        SELECT f.*, c.taste_score, c.quality_score, c.value_score,
+               c.service_score, c.presentation_score
+        FROM FEEDBACK f
+        LEFT JOIN CATEGORY_RATING c ON f.feedback_id = c.feedback_id
+    """)
+
     feedbacks = cursor.fetchall()
+
     cursor.close()
     conn.close()
+
     return jsonify(feedbacks)
 
 # ------------------- LOCATIONS -------------------
@@ -189,11 +205,12 @@ def get_locations():
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT * FROM LOCATION")
     rows = cursor.fetchall()
+
     cursor.close()
     conn.close()
+
     return jsonify(rows)
 
-
-# ------------------- RUN SERVER -------------------
+# ------------------- RUN -------------------
 if __name__ == "__main__":
     app.run(debug=True)
